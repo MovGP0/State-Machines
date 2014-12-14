@@ -5,12 +5,14 @@ namespace ActiveStateMachine.Messages
     [ToString]
     public sealed class StateMachineSystemMessage : StateMachineMessage
     {
-        public StateMachineSystemMessage(StateMachineInfo payload) 
+        public StateMachineSystemMessage(string stateMachineName, string message) 
             : base(new Version(1,0))
         {
-            Payload = payload;
+            StateMachineName = stateMachineName;
+            Message = message;
         }
 
-        public StateMachineInfo Payload { get; }
+        public string Message { get; }
+        public string StateMachineName { get; }
     }
 }
