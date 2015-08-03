@@ -1,30 +1,127 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reactive.Disposables;
+using System.Threading;
+using System.Threading.Tasks;
 using ActiveStateMachine.Messages;
 using ActiveStateMachine.States;
+using ActiveStateMachine.Transitions;
 using Anotar.NLog;
+using MoreLinq;
 
 namespace ActiveStateMachine
 {
-    public sealed class StateMachine : IObserver<IMessage>, IObservable<IMessage>
+    public sealed class StateMachine : IObserver<IMessage>, IObservable<IMessage>, IDisposable
     {
         public string Name { get; }
         public IEnumerable<State> PossibleStates { get; }
-        public State CurrentState => StateHistory.Last();
-        public IEnumerable<State> StateHistory { get; } = new List<State>();
-        public IEnumerable<IMessage> MessageHistory { get; } = new List<IMessage>();
+
+        public State CurrentState
+        {
+            get { return StateHistory.Last(); }
+            set { StateHistory = new List<State>(StateHistory) { value }; }
+        }
+
+        public IEnumerable<State> StateHistory { get; private set; } = new List<State>();
+        public IList<IMessage> MessageHistory { get; } = new List<IMessage>();
         public StateMachineState State { get; private set; }
         private List<IObserver<IMessage>> Observers { get; } = new List<IObserver<IMessage>>();
+
         public bool CanStart => State == StateMachineState.Initialized || State == StateMachineState.Paused;
         public bool CanPause => State == StateMachineState.Running;
         public bool CanResume => State == StateMachineState.Paused;
+        
+        private Task WorkerTask { get; set; }
+        private CancellationTokenSource TokenSource { get; set; }
 
-        public StateMachine(string name, IEnumerable<State> possibleStates)
+        private void WorkerMethod()
         {
+            Resumer.WaitOne();
+
+            try
+            {
+                foreach (var trigger in TriggerQueue.GetConsumingEnumerable(TokenSource.Token))
+                {
+                    foreach (var transition in CurrentState.StateTransitionList.Where(t => t.Name == trigger))
+                    {
+                        ExecuteTransition(transition);
+                    }
+                }
+
+                if (TokenSource.IsCancellationRequested)
+                {
+                    MessageObservers(new StateMachineSystemMessage(Name, "cancelled"));
+                }
+            }
+            catch(TaskCanceledException)
+            {
+                MessageObservers(new StateMachineSystemMessage(Name, "cancelled"));
+                Start();
+            }
+        }
+
+        private void ExecuteTransition(Transition transition)
+        {
+            // Check Preconditions 
+
+            if (CurrentState.StateName != transition.SourceStateName)
+            {
+                MessageObservers(new StateMachineSystemMessage(Name, "Transition was in wrong state."));
+                return;
+            }
+
+            if (!PossibleStates.Select(s => s.StateName).Contains(transition.Name))
+            {
+                MessageObservers(new StateMachineSystemMessage(Name, "Can not transition to target state."));
+                return;
+            }
+
+            var notMetPrecondition = transition.Preconditions.FirstOrDefault(p => p.IsValid);
+            if(notMetPrecondition != null)
+            {
+                MessageObservers(new StateMachineSystemMessage(Name,
+                    $"Can not transition to target state, because precondition {notMetPrecondition.Name} was not met."));
+                return;
+            }
+
+            MessageObservers(new StateMachineSystemMessage(Name, "leaving state"));
+            CurrentState.ExitActions.ForEach(a => a.Execute());
+
+            MessageObservers(new StateMachineSystemMessage(Name, "transitioning state"));
+            transition.TransitionActions.ForEach(a => a.Execute());
+
+            MessageObservers(new StateMachineSystemMessage(Name, "entering state"));
+            CurrentState = PossibleStates.Single(s => s.StateName == transition.TargetStateName);
+            CurrentState.EntryActions.ForEach(a => a.Execute());
+        }
+
+        private void EnterTrigger(string triggerName)
+        {
+            TriggerQueue.Add(triggerName);
+        }
+
+        private ManualResetEvent Resumer { get; set; }
+        private BlockingCollection<string> TriggerQueue { get; }
+
+        public StateMachine(string name, IEnumerable<State> possibleStates, int queueCapacity)
+        {
+            var possibleStateArray = possibleStates as State[] ?? possibleStates.ToArray();
+            if (possibleStateArray.Count(s => s.IsDefaultState) != 1)
+            {
+                throw new ArgumentException("States must have exactly one default state.", nameof(possibleStates));
+            }
+
+            var possibleStateNames = possibleStateArray.Select(s => s.StateName).ToArray();
+            if (possibleStateNames.Distinct().Count() == possibleStateNames.Count())
+            {
+                throw new ArgumentException("States must have distinct names.", nameof(possibleStates));
+            }
+
             Name = name;
-            PossibleStates = possibleStates;
+            PossibleStates = possibleStateArray;
+            TriggerQueue = new BlockingCollection<string>(queueCapacity);
             State = StateMachineState.Initialized;
         }
 
@@ -36,9 +133,13 @@ namespace ActiveStateMachine
                 return;
             }
             
-            State = StateMachineState.Running;
-        }
+            TokenSource = new CancellationTokenSource();
+            WorkerTask = Task.Factory.StartNew(WorkerMethod, TokenSource.Token, TaskCreationOptions.LongRunning, TaskScheduler.Current);
 
+            State = StateMachineState.Running;
+            MessageObservers(new StateMachineSystemMessage(Name, "started"));
+        }
+        
         public void Pause()
         {
             if (!CanPause)
@@ -48,7 +149,15 @@ namespace ActiveStateMachine
             }
 
             State = StateMachineState.Paused;
+            Resumer.Reset();
             MessageObservers(new StateMachineSystemMessage(Name, "paused"));
+        }
+
+        public void Initialize()
+        {
+            CurrentState = PossibleStates.Single(s => s.IsDefaultState);
+            Resumer = new ManualResetEvent(true);
+            MessageObservers(new StateMachineSystemMessage(Name, "initialized"));
         }
 
         public void Resume()
@@ -59,6 +168,7 @@ namespace ActiveStateMachine
                 return;
             }
 
+            Resumer.Set();
             State = StateMachineState.Running;
             MessageObservers(new StateMachineSystemMessage(Name, "resumed"));
         }
@@ -68,7 +178,11 @@ namespace ActiveStateMachine
         {
             if(State != StateMachineState.Running) return;
 
-            throw new NotImplementedException();
+            var transitionMessage = message as StateMachineCommandMessage;
+            if (transitionMessage != null && transitionMessage.Payload.Target == Name)
+            {
+                EnterTrigger(transitionMessage.Payload.Name);
+            }
         }
 
         public void OnError(Exception error)
@@ -85,6 +199,10 @@ namespace ActiveStateMachine
 
         private void Stop()
         {
+            TokenSource.Cancel();
+            WorkerTask.Wait();
+            TriggerQueue.Dispose();
+
             State = StateMachineState.Stopped;
             MessageObservers(new StateMachineSystemMessage(Name, "stopped"));
         }
@@ -98,6 +216,19 @@ namespace ActiveStateMachine
         private void MessageObservers(IMessage message)
         {
             Observers.ForEach(observer => observer.OnNext(message));
+        }
+
+        private bool _isDisposed;
+        public void Dispose()
+        {
+            Dispose(!_isDisposed);
+            _isDisposed = true;
+        }
+
+        private void Dispose(bool disposing)
+        {
+            if (!disposing) return;
+            TriggerQueue.Dispose();
         }
     }
 }

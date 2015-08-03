@@ -2,7 +2,6 @@ using System;
 
 namespace ActiveStateMachine.Messages
 {
-    [ToString]
     public sealed class StateMachineExternalMessage 
         : StateMachineMessage
     {
@@ -11,6 +10,7 @@ namespace ActiveStateMachine.Messages
             Payload = payload;
         }
 
+        // TODO: inline this 
         public StateMachineInfo Payload { get; }
     }
 }

@@ -2,7 +2,6 @@
 
 namespace ActiveStateMachine.Messages
 {
-    [ToString]
     public sealed class StateMachineSystemMessage : StateMachineMessage
     {
         public StateMachineSystemMessage(string stateMachineName, string message) 

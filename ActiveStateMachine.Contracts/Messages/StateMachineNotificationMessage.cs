@@ -2,7 +2,6 @@ using System;
 
 namespace ActiveStateMachine.Messages
 {
-    [ToString]
     public sealed class StateMachineNotificationMessage : StateMachineMessage
     {
         public StateMachineNotificationMessage(StateMachineInfo payload) 

@@ -1,6 +1,6 @@
 ﻿using System;
 using ActiveStateMachine.Messages;
-using Anotar.NLog;
+using NLog.Fluent;
 
 namespace ActiveStateMachine.Logging
 {
@@ -16,28 +16,32 @@ namespace ActiveStateMachine.Logging
         public void OnNext(IMessage value)
         {
             var message = string.IsNullOrWhiteSpace(Name)
-                ? string.Format("Received message: {0}", value)
-                : string.Format("{0}: Received message: {1}", Name, value);
+                ? $"Received message: {value}"
+                : $"{Name}: Received message: {value}";
 
-            LogTo.Trace(message);
+            Log.Trace()
+                .Message(message);
         }
 
         public void OnError(Exception error)
         {
             var message = string.IsNullOrWhiteSpace(Name)
                 ? "Encountered error."
-                : string.Format("{0}: Encountered error.", Name);
+                : $"{Name}: Encountered error.";
 
-            LogTo.ErrorException(message, error);
+            Log.Error()
+                .Message(message)
+                .Exception(error);
         }
 
         public void OnCompleted()
         {
             var message = string.IsNullOrWhiteSpace(Name)
                 ? "Source completed."
-                : string.Format("{0}: Source completed.", Name);
+                : $"{Name}: Source completed.";
 
-            LogTo.Trace(message);
+            Log.Trace()
+                .Message(message);
         }
     }
 }

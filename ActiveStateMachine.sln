@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 14
-VisualStudioVersion = 14.0.22310.1
+VisualStudioVersion = 14.0.23107.0
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Documents", "Documents", "{B36C3C2E-5747-41E0-805F-41960DFB6432}"
 	ProjectSection(SolutionItems) = preProject
@@ -9,6 +9,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Documents", "Documents", "{
 	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ActiveStateMachine", "ActiveStateMachine\ActiveStateMachine.csproj", "{8C055B35-5FC5-4F9D-92C4-AFCBC2F43EF7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ActiveStateMachine.Contracts", "ActiveStateMachine.Contracts\ActiveStateMachine.Contracts.csproj", "{65823EBB-F2CA-4A1F-B075-BD2D5F63ABE8}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -20,6 +22,10 @@ Global
 		{8C055B35-5FC5-4F9D-92C4-AFCBC2F43EF7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{8C055B35-5FC5-4F9D-92C4-AFCBC2F43EF7}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{8C055B35-5FC5-4F9D-92C4-AFCBC2F43EF7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{65823EBB-F2CA-4A1F-B075-BD2D5F63ABE8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{65823EBB-F2CA-4A1F-B075-BD2D5F63ABE8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{65823EBB-F2CA-4A1F-B075-BD2D5F63ABE8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{65823EBB-F2CA-4A1F-B075-BD2D5F63ABE8}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

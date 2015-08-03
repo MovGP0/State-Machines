@@ -1,6 +1,5 @@
 namespace ActiveStateMachine.Messages
 {
-    [ToString]
     public sealed class StateMachineInfo
     {
         public StateMachineInfo(string name, string eventInfo, string source, string target)
