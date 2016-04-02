@@ -183,9 +183,9 @@ namespace ActiveStateMachine
             if(State != StateMachineState.Running) return;
 
             var transitionMessage = message as StateMachineCommandMessage;
-            if (transitionMessage != null && transitionMessage.Payload.Target == Name)
+            if (transitionMessage != null && transitionMessage.Target == Name)
             {
-                EnterTrigger(transitionMessage.Payload.Name);
+                EnterTrigger(transitionMessage.Name);
             }
         }
 
