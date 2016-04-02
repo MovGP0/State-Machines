@@ -3,14 +3,11 @@ using System;
 namespace ActiveStateMachine.Messages
 {
     public sealed class StateMachineExternalMessage 
-        : StateMachineMessage
+        : StateMachineInfoMessage
     {
-        public StateMachineExternalMessage(StateMachineInfo payload) : base(new Version(1,0))
+        public StateMachineExternalMessage(string name, string eventInfo, string source, string target) 
+            : base(new Version(1,0), name, eventInfo, source, target)
         {
-            Payload = payload;
         }
-
-        // TODO: inline this 
-        public StateMachineInfo Payload { get; }
     }
 }

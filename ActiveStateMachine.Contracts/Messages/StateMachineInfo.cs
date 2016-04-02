@@ -1,8 +1,10 @@
+using System;
+
 namespace ActiveStateMachine.Messages
 {
-    public sealed class StateMachineInfo
+    public abstract class StateMachineInfoMessage : StateMachineMessage
     {
-        public StateMachineInfo(string name, string eventInfo, string source, string target)
+        protected StateMachineInfoMessage(Version version, string name, string eventInfo, string source, string target) : base(version)
         {
             Name = name;
             EventInfo = eventInfo;
