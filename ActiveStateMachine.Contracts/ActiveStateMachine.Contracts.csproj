@@ -66,19 +66,31 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Logging\MessageLogger.cs" />
-    <Compile Include="Messages\IMessage.cs" />
+    <Compile Include="Messages\Events\CompletedEvent.cs" />
+    <Compile Include="Messages\Events\ErrorEvent.cs" />
+    <Compile Include="Messages\Events\InfoEvent.cs" />
+    <Compile Include="Messages\Commands\InitializeCommand.cs" />
+    <Compile Include="Messages\Events\InitializedEvent.cs" />
     <Compile Include="Messages\MessageReceiver.cs" />
-    <Compile Include="Messages\StateMachineCommandMessage.cs" />
-    <Compile Include="Messages\StateMachineExternalMessage.cs" />
-    <Compile Include="Messages\StateMachineInfo.cs" />
+    <Compile Include="Messages\Commands\PauseCommand.cs" />
+    <Compile Include="Messages\Events\PausedEvent.cs" />
+    <Compile Include="Messages\Commands\ResumeCommand.cs" />
+    <Compile Include="Messages\Events\ResumedEvent.cs" />
+    <Compile Include="Messages\Commands\StartCommand.cs" />
+    <Compile Include="Messages\Events\StartedEvent.cs" />
+    <Compile Include="Messages\Commands\StateMachineCommand.cs" />
+    <Compile Include="Messages\Events\StateMachineEvent.cs" />
     <Compile Include="Messages\StateMachineMessage.cs" />
-    <Compile Include="Messages\StateMachineNotificationMessage.cs" />
-    <Compile Include="Messages\StateMachineSystemMessage.cs" />
+    <Compile Include="Messages\Commands\StopCommand.cs" />
+    <Compile Include="Messages\Events\StoppedEvent.cs" />
+    <Compile Include="Messages\Events\TraceEvent.cs" />
+    <Compile Include="Messages\Events\WarnEvent.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
   </ItemGroup>
+  <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.

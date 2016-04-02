@@ -7,11 +7,11 @@ using System.Threading.Tasks.Dataflow;
 
 namespace ActiveStateMachine.Messages
 {
-    public sealed class MessageReceiver : IObservable<IMessage>
+    public sealed class MessageReceiver : IObservable<StateMachineMessage>
     {
-        private List<IObserver<IMessage>> Observers { get; } = new List<IObserver<IMessage>>();
+        private List<IObserver<StateMachineMessage>> Observers { get; } = new List<IObserver<StateMachineMessage>>();
 
-        public async Task ReceiveAsync(ISourceBlock<IMessage> source)
+        public async Task ReceiveAsync(ISourceBlock<StateMachineMessage> source)
         {
             while (await source.OutputAvailableAsync())
             {
@@ -22,7 +22,7 @@ namespace ActiveStateMachine.Messages
             Observers.ForEach(observer => observer.OnCompleted());
         }
 
-        public async Task ReceiveAsync(ISourceBlock<IMessage> source, CancellationToken token)
+        public async Task ReceiveAsync(ISourceBlock<StateMachineMessage> source, CancellationToken token)
         {
             while (await source.OutputAvailableAsync(token))
             {
@@ -33,7 +33,7 @@ namespace ActiveStateMachine.Messages
             Observers.ForEach(observer => observer.OnCompleted());
         }
 
-        public IDisposable Subscribe(IObserver<IMessage> observer)
+        public IDisposable Subscribe(IObserver<StateMachineMessage> observer)
         {
             Observers.Add(observer);
             return Disposable.Create(() => Observers.Remove(observer));

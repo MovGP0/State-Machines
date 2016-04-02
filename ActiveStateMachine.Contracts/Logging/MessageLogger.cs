@@ -4,7 +4,7 @@ using NLog.Fluent;
 
 namespace ActiveStateMachine.Logging
 {
-    public sealed class MessageLogger : IObserver<IMessage>
+    public sealed class MessageLogger : IObserver<StateMachineMessage>
     {
         public MessageLogger(string name = "")
         {
@@ -13,14 +13,15 @@ namespace ActiveStateMachine.Logging
 
         private string Name { get; }
 
-        public void OnNext(IMessage value)
+        public void OnNext(StateMachineMessage value)
         {
             var message = string.IsNullOrWhiteSpace(Name)
                 ? $"Received message: {value}"
                 : $"{Name}: Received message: {value}";
 
             Log.Trace()
-                .Message(message);
+                .Message(message)
+                .Write();
         }
 
         public void OnError(Exception error)
@@ -31,7 +32,8 @@ namespace ActiveStateMachine.Logging
 
             Log.Error()
                 .Message(message)
-                .Exception(error);
+                .Exception(error)
+                .Write();
         }
 
         public void OnCompleted()
@@ -41,7 +43,8 @@ namespace ActiveStateMachine.Logging
                 : $"{Name}: Source completed.";
 
             Log.Trace()
-                .Message(message);
+                .Message(message)
+                .Write();
         }
     }
 }

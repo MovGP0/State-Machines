@@ -39,6 +39,10 @@
       <HintPath>..\packages\Anotar.NLog.Fody.3.0.0\lib\Anotar.NLog.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="FunctionalSharp.PatternMatching, Version=0.1.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\FunctionalSharp.PatternMatching.0.9.2\lib\net451\FunctionalSharp.PatternMatching.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <Reference Include="MoreLinq, Version=1.4.18916.0, Culture=neutral, PublicKeyToken=384d532d7e88985d, processorArchitecture=MSIL">
       <HintPath>..\packages\morelinq.1.4.0\lib\net35\MoreLinq.dll</HintPath>
       <Private>True</Private>

@@ -10,10 +10,11 @@ using ActiveStateMachine.States;
 using ActiveStateMachine.Transitions;
 using Anotar.NLog;
 using MoreLinq;
+using NLog.Fluent;
 
 namespace ActiveStateMachine
 {
-    public sealed class StateMachine : IObserver<IMessage>, IObservable<IMessage>, IDisposable
+    public sealed class StateMachine : IObserver<StateMachineMessage>, IObservable<StateMachineMessage>, IDisposable
     {
         public string Name { get; }
         public IEnumerable<State> PossibleStates { get; }
@@ -25,9 +26,9 @@ namespace ActiveStateMachine
         }
 
         public IEnumerable<State> StateHistory { get; private set; } = new List<State>();
-        public IList<IMessage> MessageHistory { get; } = new List<IMessage>();
+        public IList<StateMachineMessage> MessageHistory { get; } = new List<StateMachineMessage>();
         public StateMachineState State { get; private set; }
-        private List<IObserver<IMessage>> Observers { get; } = new List<IObserver<IMessage>>();
+        private List<IObserver<StateMachineMessage>> Observers { get; } = new List<IObserver<StateMachineMessage>>();
 
         public bool CanStart => State == StateMachineState.Initialized || State == StateMachineState.Paused;
         public bool CanPause => State == StateMachineState.Running;
@@ -48,12 +49,12 @@ namespace ActiveStateMachine
                 
                 if (TokenSource.IsCancellationRequested)
                 {
-                    MessageObservers(new StateMachineSystemMessage(Name, "cancelled"));
+                    MessageObservers(new InfoEvent(Name, "cancelled"));
                 }
             }
             catch(TaskCanceledException)
             {
-                MessageObservers(new StateMachineSystemMessage(Name, "cancelled"));
+                MessageObservers(new InfoEvent(Name, "cancelled"));
                 Start();
             }
         }
@@ -62,13 +63,13 @@ namespace ActiveStateMachine
         {
             if (!EnsureAllPreconditionsMetAndMessageObserversWhenNotMet(transition)) return;
 
-            MessageObservers(new StateMachineSystemMessage(Name, "leaving state"));
+            MessageObservers(new InfoEvent(Name, "leaving state"));
             CurrentState.ExitActions.ForEach(a => a.Execute());
 
-            MessageObservers(new StateMachineSystemMessage(Name, "transitioning state"));
+            MessageObservers(new InfoEvent(Name, "transitioning state"));
             transition.TransitionActions.ForEach(a => a.Execute());
 
-            MessageObservers(new StateMachineSystemMessage(Name, "entering state"));
+            MessageObservers(new InfoEvent(Name, "entering state"));
             CurrentState = PossibleStates.Single(s => s.StateName == transition.TargetStateName);
             CurrentState.EntryActions.ForEach(a => a.Execute());
         }
@@ -77,20 +78,20 @@ namespace ActiveStateMachine
         {
             if (CurrentState.StateName != transition.SourceStateName)
             {
-                MessageObservers(new StateMachineSystemMessage(Name, "Transition was in wrong state."));
+                MessageObservers(new ErrorEvent(Name, "Transition was in wrong state."));
                 return false;
             }
 
             if (!PossibleStates.Select(s => s.StateName).Contains(transition.Name))
             {
-                MessageObservers(new StateMachineSystemMessage(Name, "Can not transition to target state."));
+                MessageObservers(new ErrorEvent(Name, "Can not transition to target state."));
                 return false;
             }
 
             var notMetPrecondition = transition.Preconditions.FirstOrDefault(p => p.IsValid);
             if (notMetPrecondition != null)
             {
-                MessageObservers(new StateMachineSystemMessage(Name,
+                MessageObservers(new ErrorEvent(Name,
                     $"Can not transition to target state, because precondition {notMetPrecondition.Name} was not met."));
                 return false;
             }
@@ -129,7 +130,7 @@ namespace ActiveStateMachine
             State = StateMachineState.Initialized;
         }
 
-        public void Start()
+        private void Start()
         {
             if (!CanStart)
             {
@@ -141,10 +142,10 @@ namespace ActiveStateMachine
             WorkerTask = Task.Factory.StartNew(WorkerMethod, TokenSource.Token, TaskCreationOptions.LongRunning, TaskScheduler.Current);
 
             State = StateMachineState.Running;
-            MessageObservers(new StateMachineSystemMessage(Name, "started"));
+            MessageObservers(new StartedEvent(Name));
         }
         
-        public void Pause()
+        private void Pause()
         {
             if (!CanPause)
             {
@@ -154,51 +155,59 @@ namespace ActiveStateMachine
 
             State = StateMachineState.Paused;
             Resumer.Reset();
-            MessageObservers(new StateMachineSystemMessage(Name, "paused"));
+            MessageObservers(new PausedEvent(Name));
         }
 
         public void Initialize()
         {
             CurrentState = PossibleStates.Single(s => s.IsDefaultState);
             Resumer = new ManualResetEvent(true);
-            MessageObservers(new StateMachineSystemMessage(Name, "initialized"));
+            MessageObservers(new InitializedEvent(Name));
         }
 
         public void Resume()
         {
             if (!CanResume)
             {
-                LogTo.Warn("Could not resume, because current state is {0}.", State);
+                Log.Warn()
+                    .Message("Could not resume, because current state is {0}.", State)
+                    .Write();
+
                 return;
             }
 
             Resumer.Set();
             State = StateMachineState.Running;
-            MessageObservers(new StateMachineSystemMessage(Name, "resumed"));
+            MessageObservers(new ResumedEvent(Name));
         }
 
         [LogToErrorOnException]
-        public void OnNext(IMessage message)
+        public void OnNext(StateMachineMessage message)
         {
-            if(State != StateMachineState.Running) return;
-
-            var transitionMessage = message as StateMachineCommandMessage;
-            if (transitionMessage != null && transitionMessage.Target == Name)
-            {
-                EnterTrigger(transitionMessage.Name);
-            }
+            if (State != StateMachineState.Running) return;
+            if (message.Target != Name) return;
+            
+            if (message is StartCommand) Start();
+            if (message is PauseCommand) Pause();
+            if (message is ResumeCommand) Resume();
+            if (message is StopCommand) Stop(); 
+            if (message is StateMachineCommand) EnterTrigger(message.Name);
         }
-
+        
         public void OnError(Exception error)
         {
             Stop();
-            LogTo.InfoException("Stopped because of an exception", error);
+
+            Log.Info()
+                .Message("Stopped because of an exception")
+                .Exception(error)
+                .Write();
         }
 
         public void OnCompleted()
         {
             Stop();
-            MessageObservers(new StateMachineSystemMessage(Name, "completed"));
+            MessageObservers(new CompletedEvent(Name));
         }
 
         private void Stop()
@@ -208,16 +217,16 @@ namespace ActiveStateMachine
             Dispose();
 
             State = StateMachineState.Stopped;
-            MessageObservers(new StateMachineSystemMessage(Name, "stopped"));
+            MessageObservers(new StoppedEvent(Name));
         }
-
-        public IDisposable Subscribe(IObserver<IMessage> observer)
+         
+        public IDisposable Subscribe(IObserver<StateMachineMessage> observer)
         {
             Observers.Add(observer);
             return Disposable.Create(() => Observers.Remove(observer));
         }
 
-        private void MessageObservers(IMessage message)
+        private void MessageObservers(StateMachineMessage message)
         {
             Observers.ForEach(observer => observer.OnNext(message));
         }
