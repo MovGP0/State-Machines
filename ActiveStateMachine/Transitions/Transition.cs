@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Anotar.NLog;
+using MoreLinq;
+using NLog.Fluent;
 
 namespace ActiveStateMachine.Transitions
 {
@@ -9,6 +12,7 @@ namespace ActiveStateMachine.Transitions
         public string Name { get; }
         public string SourceStateName { get; }
         public string TargetStateName { get; }
+        private bool IsCompleted { get; set; }
 
         /// <summary>
         /// List of checks that need to be done before the transition.
@@ -33,18 +37,29 @@ namespace ActiveStateMachine.Transitions
         [LogToErrorOnException]
         public void OnNext(string value)
         {
-            throw new NotImplementedException();
+            if (IsCompleted) return;
+
+            if (Preconditions.All(p => p.IsValid))
+            {
+                TransitionActions.ForEach(t => t.Execute());
+            }
         }
 
         public void OnError(Exception error)
         {
-            LogTo.TraceException("Handling error in transition.", error);
-        }
+            if (IsCompleted) return;
 
+            Log.Trace()
+                .Message($"Handling error in transition {Name}.")
+                .Exception(error);
+
+            OnCompleted();
+        }
+        
         [LogToErrorOnException]
         public void OnCompleted()
         {
-            throw new NotImplementedException();
+            IsCompleted = true;
         }
     }
 }
