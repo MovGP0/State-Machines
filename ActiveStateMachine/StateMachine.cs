@@ -60,27 +60,7 @@ namespace ActiveStateMachine
 
         private void ExecuteTransition(Transition transition)
         {
-            // Check Preconditions 
-
-            if (CurrentState.StateName != transition.SourceStateName)
-            {
-                MessageObservers(new StateMachineSystemMessage(Name, "Transition was in wrong state."));
-                return;
-            }
-
-            if (!PossibleStates.Select(s => s.StateName).Contains(transition.Name))
-            {
-                MessageObservers(new StateMachineSystemMessage(Name, "Can not transition to target state."));
-                return;
-            }
-
-            var notMetPrecondition = transition.Preconditions.FirstOrDefault(p => p.IsValid);
-            if(notMetPrecondition != null)
-            {
-                MessageObservers(new StateMachineSystemMessage(Name,
-                    $"Can not transition to target state, because precondition {notMetPrecondition.Name} was not met."));
-                return;
-            }
+            if (!EnsureAllPreconditionsMetAndMessageObserversWhenNotMet(transition)) return;
 
             MessageObservers(new StateMachineSystemMessage(Name, "leaving state"));
             CurrentState.ExitActions.ForEach(a => a.Execute());
@@ -93,13 +73,41 @@ namespace ActiveStateMachine
             CurrentState.EntryActions.ForEach(a => a.Execute());
         }
 
+        private bool EnsureAllPreconditionsMetAndMessageObserversWhenNotMet(Transition transition)
+        {
+            if (CurrentState.StateName != transition.SourceStateName)
+            {
+                MessageObservers(new StateMachineSystemMessage(Name, "Transition was in wrong state."));
+                return false;
+            }
+
+            if (!PossibleStates.Select(s => s.StateName).Contains(transition.Name))
+            {
+                MessageObservers(new StateMachineSystemMessage(Name, "Can not transition to target state."));
+                return false;
+            }
+
+            var notMetPrecondition = transition.Preconditions.FirstOrDefault(p => p.IsValid);
+            if (notMetPrecondition != null)
+            {
+                MessageObservers(new StateMachineSystemMessage(Name,
+                    $"Can not transition to target state, because precondition {notMetPrecondition.Name} was not met."));
+                return false;
+            }
+
+            return true;
+        }
+
         private void EnterTrigger(string triggerName)
         {
             TriggerQueue.Add(triggerName);
         }
 
         private ManualResetEvent Resumer { get; set; }
-        private BlockingCollection<string> TriggerQueue { get; }
+
+        private readonly BlockingCollection<string> _triggerQueue;
+        // ReSharper disable once ConvertToAutoPropertyWhenPossible
+        private BlockingCollection<string> TriggerQueue => _triggerQueue;
 
         public StateMachine(string name, IEnumerable<State> possibleStates, int queueCapacity)
         {
@@ -117,7 +125,7 @@ namespace ActiveStateMachine
 
             Name = name;
             PossibleStates = possibleStateArray;
-            TriggerQueue = new BlockingCollection<string>(queueCapacity);
+            _triggerQueue = new BlockingCollection<string>(queueCapacity);
             State = StateMachineState.Initialized;
         }
 
@@ -197,7 +205,7 @@ namespace ActiveStateMachine
         {
             TokenSource.Cancel();
             WorkerTask.Wait();
-            TriggerQueue.Dispose();
+            Dispose();
 
             State = StateMachineState.Stopped;
             MessageObservers(new StateMachineSystemMessage(Name, "stopped"));
@@ -224,7 +232,7 @@ namespace ActiveStateMachine
         private void Dispose(bool disposing)
         {
             if (!disposing) return;
-            TriggerQueue.Dispose();
+            _triggerQueue.Dispose();
         }
     }
 }
