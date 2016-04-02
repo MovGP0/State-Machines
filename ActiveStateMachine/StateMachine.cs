@@ -42,14 +42,10 @@ namespace ActiveStateMachine
 
             try
             {
-                foreach (var trigger in TriggerQueue.GetConsumingEnumerable(TokenSource.Token))
-                {
-                    foreach (var transition in CurrentState.StateTransitionList.Where(t => t.Name == trigger))
-                    {
-                        ExecuteTransition(transition);
-                    }
-                }
-
+                TriggerQueue.GetConsumingEnumerable(TokenSource.Token)
+                    .SelectMany(trigger => CurrentState.StateTransitionList.Where(t => t.Name == trigger))
+                    .ForEach(ExecuteTransition);
+                
                 if (TokenSource.IsCancellationRequested)
                 {
                     MessageObservers(new StateMachineSystemMessage(Name, "cancelled"));
