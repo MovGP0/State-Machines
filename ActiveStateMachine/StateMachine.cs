@@ -2,7 +2,10 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reactive;
 using System.Reactive.Disposables;
+using System.Reactive.Linq;
+using System.Reactive.Subjects;
 using System.Threading;
 using System.Threading.Tasks;
 using ActiveStateMachine.Messages;
@@ -14,78 +17,123 @@ using NLog.Fluent;
 
 namespace ActiveStateMachine
 {
-    public sealed class StateMachine : IObserver<StateMachineMessage>, IObservable<StateMachineMessage>, IDisposable
+    public static class StateMachine
     {
-        private string Name { get; }
-        private IEnumerable<State> PossibleStates { get; }
-
-        private State CurrentState
+        public static ISubject<StateMachineMessage, StateMachineMessage> Create(string name, IEnumerable<State> possibleStates, int queueCapacity)
         {
-            get { return StateHistory.Last(); }
-            set { StateHistory = new List<State>(StateHistory) { value }; }
+            // Checks
+            var possibleStateCollection = possibleStates.ToArray();
+            if(possibleStateCollection.Count(s => s.IsDefaultState) != 1)
+            {
+                throw new ArgumentException("States must have exactly one default state.", nameof(possibleStates));
+            }
+
+            var possibleStateNames = possibleStateCollection.Select(s => s.StateName).ToArray();
+            if(possibleStateNames.Distinct().Count() == possibleStateNames.Count())
+            {
+                throw new ArgumentException("States must have distinct names.", nameof(possibleStates));
+            }
+
+            // State 
+            ICollection<State> stateHistory = new List<State>();
+            var state = StateMachineState.Initialized;
+            var triggerQueue = new BlockingCollection<string>(queueCapacity);
+            ICollection<StateMachineMessage> messageHistory = new List<StateMachineMessage>();
+            var workerTask = Task.CompletedTask;
+            var tokenSource = new CancellationTokenSource();
+            ICollection<IObserver<StateMachineMessage>> observers = new List<IObserver<StateMachineMessage>>();
+            ManualResetEvent resumer;
+
+            // Creation
+            Initialize(name, stateHistory, possibleStateCollection, observers, out resumer);
+
+            var observer = Observer.Create<StateMachineMessage>(
+                message => state = OnNext(message, name, stateHistory, possibleStateCollection, state, triggerQueue, messageHistory, ref workerTask, ref tokenSource, observers, resumer), 
+                ex => state = OnError(ex, name, triggerQueue, ref workerTask, tokenSource, observers), 
+                () => state = OnCompleted(name, triggerQueue, ref workerTask, tokenSource, observers));
+
+            var observable = Observable.Create<StateMachineMessage>(
+                obs => Subscribe(obs, observers));
+
+            return Subject.Create(observer, observable);
+        }
+        
+        private static bool CanStart(StateMachineState state)
+        {
+            return state == StateMachineState.Initialized || state == StateMachineState.Paused;
         }
 
-        private IEnumerable<State> StateHistory { get; set; } = new List<State>();
-        private IList<StateMachineMessage> MessageHistory { get; } = new List<StateMachineMessage>();
-        private StateMachineState State { get; set; }
-        private List<IObserver<StateMachineMessage>> Observers { get; } = new List<IObserver<StateMachineMessage>>();
-
-        private bool CanStart => State == StateMachineState.Initialized || State == StateMachineState.Paused;
-        private bool CanPause => State == StateMachineState.Running;
-        private bool CanResume => State == StateMachineState.Paused;
-
-        private Task WorkerTask { get; set; }
-        private CancellationTokenSource TokenSource { get; set; }
-
-        private void WorkerMethod()
+        private static bool CanPause(StateMachineState state)
         {
-            Resumer.WaitOne();
+            return state == StateMachineState.Running;
+        }
+
+        private static bool CanResume(StateMachineState state)
+        {
+            return state == StateMachineState.Paused;
+        }
+        
+        private static State GetCurrentState(IEnumerable<State> stateHistory)
+        {
+            return stateHistory.Last();
+        }
+
+        private static void SetCurrentState(State state, ICollection<State> stateHistory)
+        {
+            stateHistory.Add(state);
+        }
+        
+        private static void WorkerMethod(string name, ICollection<State> stateHistory, ICollection<State> possibleStates, BlockingCollection<string> triggerQueue, 
+            CancellationTokenSource tokesSource, ICollection<IObserver<StateMachineMessage>> observers, WaitHandle resumer)
+        {
+            resumer.WaitOne();
 
             try
             {
-                TriggerQueue.GetConsumingEnumerable(TokenSource.Token)
-                    .SelectMany(trigger => CurrentState.StateTransitionList.Where(t => t.Name == trigger))
-                    .ForEach(ExecuteTransition);
+                triggerQueue.GetConsumingEnumerable(tokesSource.Token)
+                    .SelectMany(trigger => GetCurrentState(stateHistory).StateTransitionList.Where(t => t.Name == trigger))
+                    .ForEach(transition => ExecuteTransition(transition, name, stateHistory, possibleStates, observers));
 
-                if(TokenSource.IsCancellationRequested)
+                if(tokesSource.IsCancellationRequested)
                 {
-                    MessageObservers(new InfoEvent(Name, "cancelled"));
+                    MessageObservers(new InfoEvent(name, "cancelled"), observers);
                 }
             }
             catch(TaskCanceledException)
             {
-                MessageObservers(new InfoEvent(Name, "cancelled"));
-                Start();
+                MessageObservers(new InfoEvent(name, "cancelled"), observers);
             }
         }
 
-        private void ExecuteTransition(Transition transition)
+        private static void ExecuteTransition(Transition transition, string name, ICollection<State> stateHistory, ICollection<State> possibleStates, 
+            ICollection<IObserver<StateMachineMessage>> observers)
         {
-            if(!EnsureAllPreconditionsMetAndMessageObserversWhenNotMet(transition))
+            if(!EnsureAllPreconditionsMetAndMessageObserversWhenNotMet(transition, name, stateHistory, possibleStates, observers))
                 return;
 
-            MessageObservers(new InfoEvent(Name, "leaving state"));
-            CurrentState.ExitActions.ForEach(a => a.Execute());
+            MessageObservers(new InfoEvent(name, "leaving state"), observers);
+            GetCurrentState(stateHistory).ExitActions.ForEach(a => a.Execute());
 
-            MessageObservers(new InfoEvent(Name, "transitioning state"));
+            MessageObservers(new InfoEvent(name, "transitioning state"), observers);
             transition.TransitionActions.ForEach(a => a.Execute());
 
-            MessageObservers(new InfoEvent(Name, "entering state"));
-            CurrentState = PossibleStates.Single(s => s.StateName == transition.TargetStateName);
-            CurrentState.EntryActions.ForEach(a => a.Execute());
+            MessageObservers(new InfoEvent(name, "entering state"), observers);
+            SetCurrentState(possibleStates.Single(s => s.StateName == transition.TargetStateName), stateHistory);
+            GetCurrentState(stateHistory).EntryActions.ForEach(a => a.Execute());
         }
 
-        private bool EnsureAllPreconditionsMetAndMessageObserversWhenNotMet(Transition transition)
+        private static bool EnsureAllPreconditionsMetAndMessageObserversWhenNotMet(Transition transition, string name, IEnumerable<State> stateHistory, 
+            IEnumerable<State> possibleStates, ICollection<IObserver<StateMachineMessage>> observers)
         {
-            if(CurrentState.StateName != transition.SourceStateName)
+            if(GetCurrentState(stateHistory).StateName != transition.SourceStateName)
             {
-                MessageObservers(new ErrorEvent(Name, "Transition was in wrong state."));
+                MessageObservers(new ErrorEvent(name, "Transition was in wrong state."), observers);
                 return false;
             }
 
-            if(!PossibleStates.Select(s => s.StateName).Contains(transition.Name))
+            if(!possibleStates.Select(s => s.StateName).Contains(transition.Name))
             {
-                MessageObservers(new ErrorEvent(Name, "Can not transition to target state."));
+                MessageObservers(new ErrorEvent(name, "Can not transition to target state."), observers);
                 return false;
             }
 
@@ -93,7 +141,7 @@ namespace ActiveStateMachine
             if(notMetPrecondition != null)
             {
                 var message = $"Can not transition to target state, because precondition {notMetPrecondition.Name} was not met.";
-                MessageObservers(new ErrorEvent(Name, message));
+                MessageObservers(new ErrorEvent(name, message), observers);
                 return false;
             }
 
@@ -104,161 +152,143 @@ namespace ActiveStateMachine
             return true;
         }
 
-        private void EnterTrigger(string triggerName)
+        private static void EnterTrigger(string triggerName, BlockingCollection<string> triggerQueue)
         {
-            TriggerQueue.Add(triggerName);
+            triggerQueue.Add(triggerName);
         }
-
-        private ManualResetEvent Resumer { get; set; }
-
-        private readonly BlockingCollection<string> _triggerQueue;
-        // ReSharper disable once ConvertToAutoPropertyWhenPossible
-        private BlockingCollection<string> TriggerQueue => _triggerQueue;
-
-        public StateMachine(string name, IEnumerable<State> possibleStates, int queueCapacity)
+        
+        private static StateMachineState Start(string name, ICollection<State> stateHistory, ICollection<State> possibleStates, StateMachineState state, 
+            BlockingCollection<string> triggerQueue, ref Task workerTask, ref CancellationTokenSource tokenSource, ICollection<IObserver<StateMachineMessage>> observers, 
+            WaitHandle resumer)
         {
-            var possibleStateArray = possibleStates as State[] ?? possibleStates.ToArray();
-            if(possibleStateArray.Count(s => s.IsDefaultState) != 1)
+            if(!CanStart(state))
             {
-                throw new ArgumentException("States must have exactly one default state.", nameof(possibleStates));
+                LogTo.Warn("Could not start, because current state is {0}.", state);
+                return state;
             }
 
-            var possibleStateNames = possibleStateArray.Select(s => s.StateName).ToArray();
-            if(possibleStateNames.Distinct().Count() == possibleStateNames.Count())
+            tokenSource = new CancellationTokenSource();
+            var ts = tokenSource;
+            workerTask = Task.Factory.StartNew(() => WorkerMethod(name, stateHistory, possibleStates, triggerQueue, ts, observers, resumer), tokenSource.Token, 
+                TaskCreationOptions.LongRunning, TaskScheduler.Current);
+            MessageObservers(new StartedEvent(name), observers);
+            return StateMachineState.Running;
+        }
+
+        private static StateMachineState Pause(string name, StateMachineState state, ICollection<IObserver<StateMachineMessage>> observers, EventWaitHandle resumer)
+        {
+            if(!CanPause(state))
             {
-                throw new ArgumentException("States must have distinct names.", nameof(possibleStates));
+                LogTo.Warn("Could not pause, because current state is {0}.", state);
+                return state;
             }
-
-            Name = name;
-            PossibleStates = possibleStateArray;
-            _triggerQueue = new BlockingCollection<string>(queueCapacity);
-            State = StateMachineState.Initialized;
+            
+            resumer.Reset();
+            MessageObservers(new PausedEvent(name), observers);
+            return StateMachineState.Paused;
         }
 
-        private void Start()
+        private static void Initialize(string name, ICollection<State> stateHistory, IEnumerable<State> possibleStates, ICollection<IObserver<StateMachineMessage>> observers, 
+            out ManualResetEvent resumer)
         {
-            if(!CanStart)
-            {
-                LogTo.Warn("Could not start, because current state is {0}.", State);
-                return;
-            }
-
-            TokenSource = new CancellationTokenSource();
-            WorkerTask = Task.Factory.StartNew(WorkerMethod, TokenSource.Token, TaskCreationOptions.LongRunning, TaskScheduler.Current);
-
-            State = StateMachineState.Running;
-            MessageObservers(new StartedEvent(Name));
+            SetCurrentState(possibleStates.Single(s => s.IsDefaultState), stateHistory);
+            resumer = new ManualResetEvent(true);
+            MessageObservers(new InitializedEvent(name), observers);
         }
 
-        private void Pause()
+        private static StateMachineState Resume(string name, StateMachineState state, ICollection<IObserver<StateMachineMessage>> observers, EventWaitHandle resumer)
         {
-            if(!CanPause)
-            {
-                LogTo.Warn("Could not pause, because current state is {0}.", State);
-                return;
-            }
-
-            State = StateMachineState.Paused;
-            Resumer.Reset();
-            MessageObservers(new PausedEvent(Name));
-        }
-
-        public void Initialize()
-        {
-            CurrentState = PossibleStates.Single(s => s.IsDefaultState);
-            Resumer = new ManualResetEvent(true);
-            MessageObservers(new InitializedEvent(Name));
-        }
-
-        public void Resume()
-        {
-            if(!CanResume)
+            if(!CanResume(state))
             {
                 Log.Warn()
-                    .Message("Could not resume, because current state is {0}.", State)
+                    .Message("Could not resume, because current state is {0}.", state)
                     .Write();
 
-                return;
+                return state;
             }
 
-            Resumer.Set();
-            State = StateMachineState.Running;
-            MessageObservers(new ResumedEvent(Name));
+            resumer.Set();
+            MessageObservers(new ResumedEvent(name), observers);
+            return StateMachineState.Running;
         }
 
         [LogToErrorOnException]
-        public void OnNext(StateMachineMessage message)
+        private static StateMachineState OnNext(StateMachineMessage message, 
+            string name, ICollection<State> stateHistory, ICollection<State> possibleStates, StateMachineState state, BlockingCollection<string> triggerQueue, 
+            ICollection<StateMachineMessage> messageHistory, ref Task workerTask, ref CancellationTokenSource tokenSource, ICollection<IObserver<StateMachineMessage>> observers, 
+            EventWaitHandle resumer)
         {
-            if(State != StateMachineState.Running)
-                return;
-            if(message.Target != Name)
-                return;
+            if(state != StateMachineState.Running)
+                return state;
+            if(message.Target != name)
+                return state;
 
-            MessageHistory.Add(message);
+            messageHistory.Add(message);
 
             var command = message as StateMachineCommand;
             if (command != null)
             {
-                HandleStateMachineCommand(command);
-                return;
+                return HandleStateMachineCommand(command, name, stateHistory, possibleStates, state, triggerQueue, ref workerTask, ref tokenSource, observers, resumer);
             }
             
             var request = message as StateMachineReqest;
             if (request != null)
             {
-                HandleStateMachineReqest(request);
+                HandleStateMachineReqest(request, name, stateHistory, possibleStates, state, observers);
             }
+
+            return state;
         }
 
-        private void HandleStateMachineCommand(StateMachineCommand message)
+        private static StateMachineState HandleStateMachineCommand(StateMachineCommand message, string name, ICollection<State> stateHistory, ICollection<State> possibleStates, 
+            StateMachineState state, BlockingCollection<string> triggerQueue, ref Task workerTask, ref CancellationTokenSource tokenSource, 
+            ICollection<IObserver<StateMachineMessage>> observers, EventWaitHandle resumer)
         {
             if (message is StartCommand)
             {
-                Start();
-                return;
+                return Start(name, stateHistory, possibleStates, state, triggerQueue, ref workerTask, ref tokenSource, observers, resumer);
             }
 
             if (message is PauseCommand)
             {
-                Pause();
-                return;
+                return Pause(name, state, observers, resumer);
             }
 
             if (message is ResumeCommand)
             {
-                Resume();
-                return;
+                return Resume(name, state, observers, resumer);
             }
 
             if (message is StopCommand)
             {
-                Stop();
-                return;
+                return Stop(name, triggerQueue, ref workerTask, tokenSource, observers);
             }
             
-            EnterTrigger(message.Name);
+            EnterTrigger(message.Name, triggerQueue);
+            return state;
         }
 
-        private void HandleStateMachineReqest(StateMachineReqest message)
+        private static void HandleStateMachineReqest(StateMachineReqest message, string name, IEnumerable<State> stateHistory, 
+            IEnumerable<State> possibleStates, StateMachineState state, ICollection<IObserver<StateMachineMessage>> observers)
         {
             var stateQuery = message as GetStateRequest;
             if (stateQuery != null)
             {
-                ReplyState(stateQuery);
+                ReplyState(stateQuery, name, state, observers);
                 return;
             }
 
             var stateQueryHistory = message as GetStateHistoryRequest;
             if (stateQueryHistory != null)
             {
-                ReplyStateHistory(stateQueryHistory);
+                ReplyStateHistory(stateQueryHistory, name, stateHistory, observers);
                 return;
             }
 
             var possibleStatesQuery = message as GetPossibleStatesRequest;
             if (possibleStatesQuery != null)
             {
-                ReplyPossibleStates(possibleStatesQuery);
+                ReplyPossibleStates(possibleStatesQuery, name, possibleStates, observers);
                 return;
             }
 
@@ -267,70 +297,62 @@ namespace ActiveStateMachine
                 .Write();
         }
 
-        private void ReplyState(StateMachineMessage query)
+        private static void ReplyState(StateMachineMessage query, string name, StateMachineState state, ICollection<IObserver<StateMachineMessage>> observers)
         {
-            MessageObservers(new StateReply(Name, query.Name, State));
+            MessageObservers(new StateReply(name, query.Name, state), observers);
         }
 
-        private void ReplyStateHistory(StateMachineMessage query)
+        private static void ReplyStateHistory(StateMachineMessage query, string name, IEnumerable<State> stateHistory, ICollection<IObserver<StateMachineMessage>> observers)
         {
-            MessageObservers(new StateHistoryReply(Name, query.Name, StateHistory));
+            MessageObservers(new StateHistoryReply(name, query.Name, stateHistory), observers);
         }
 
-        private void ReplyPossibleStates(StateMachineMessage query)
+        private static void ReplyPossibleStates(StateMachineMessage query, string name, IEnumerable<State> possibleStates, ICollection<IObserver<StateMachineMessage>> observers)
         {
-            MessageObservers(new PossibleStatesReply(Name, query.Name, PossibleStates));
+            MessageObservers(new PossibleStatesReply(name, query.Name, possibleStates), observers);
         }
 
-        public void OnError(Exception error)
+        private static StateMachineState OnError(Exception error, string name, BlockingCollection<string> triggerQueue, ref Task workerTask, CancellationTokenSource tokenSource, ICollection<IObserver<StateMachineMessage>> observers)
         {
-            Stop();
+            var newState = Stop(name, triggerQueue, ref workerTask, tokenSource, observers);
 
             Log.Info()
                 .Message("Stopped because of an exception")
                 .Exception(error)
                 .Write();
+
+            return newState;
         }
 
-        public void OnCompleted()
+        private static StateMachineState OnCompleted(string name, BlockingCollection<string> triggerQueue, ref Task workerTask, CancellationTokenSource tokenSource, 
+            ICollection<IObserver<StateMachineMessage>> observers)
         {
-            Stop();
-            MessageObservers(new CompletedEvent(Name));
+            var newState = Stop(name, triggerQueue, ref workerTask, tokenSource, observers);
+            MessageObservers(new CompletedEvent(name), observers);
+            return newState;
         }
 
-        private void Stop()
+        private static StateMachineState Stop(string name, BlockingCollection<string> triggerQueue, ref Task workerTask, CancellationTokenSource tokenSource, 
+            ICollection<IObserver<StateMachineMessage>> observers)
         {
-            TokenSource.Cancel();
-            WorkerTask.Wait();
-            Dispose();
+            tokenSource.Cancel();
+            workerTask.Wait();
+            triggerQueue.Dispose();
 
-            State = StateMachineState.Stopped;
-            MessageObservers(new StoppedEvent(Name));
+            MessageObservers(new StoppedEvent(name), observers);
+            return StateMachineState.Stopped;
         }
 
-        public IDisposable Subscribe(IObserver<StateMachineMessage> observer)
+        private static IDisposable Subscribe(IObserver<StateMachineMessage> observer, ICollection<IObserver<StateMachineMessage>> observers)
         {
-            Observers.Add(observer);
-            return Disposable.Create(() => Observers.Remove(observer));
+            observers.Add(observer);
+            return Disposable.Create(() => observers.Remove(observer));
         }
 
-        private void MessageObservers(StateMachineMessage message)
+        private static void MessageObservers(StateMachineMessage message, ICollection<IObserver<StateMachineMessage>> observers)
         {
-            Observers.ForEach(observer => observer.OnNext(message));
+            observers.ForEach(observer => observer.OnNext(message));
         }
-
-        private bool _isDisposed;
-        public void Dispose()
-        {
-            Dispose(!_isDisposed);
-            _isDisposed = true;
-        }
-
-        private void Dispose(bool disposing)
-        {
-            if(!disposing)
-                return;
-            _triggerQueue.Dispose();
-        }
+        
     }
 }
