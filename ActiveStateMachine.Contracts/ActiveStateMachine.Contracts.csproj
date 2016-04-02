@@ -71,6 +71,10 @@
     <Compile Include="Messages\Events\InfoEvent.cs" />
     <Compile Include="Messages\Commands\InitializeCommand.cs" />
     <Compile Include="Messages\Events\InitializedEvent.cs" />
+    <Compile Include="Messages\Requests\GetMessageHistoryRequest.cs" />
+    <Compile Include="Messages\Requests\GetPossibleStatesRequest.cs" />
+    <Compile Include="Messages\Requests\GetStateHistoryRequest.cs" />
+    <Compile Include="Messages\Requests\GetStateRequest.cs" />
     <Compile Include="Messages\MessageReceiver.cs" />
     <Compile Include="Messages\Commands\PauseCommand.cs" />
     <Compile Include="Messages\Events\PausedEvent.cs" />
@@ -80,12 +84,22 @@
     <Compile Include="Messages\Events\StartedEvent.cs" />
     <Compile Include="Messages\Commands\StateMachineCommand.cs" />
     <Compile Include="Messages\Events\StateMachineEvent.cs" />
+    <Compile Include="Messages\Replies\PossibleStatesReply.cs" />
+    <Compile Include="Messages\Replies\StateHistoryReply.cs" />
     <Compile Include="Messages\StateMachineMessage.cs" />
     <Compile Include="Messages\Commands\StopCommand.cs" />
     <Compile Include="Messages\Events\StoppedEvent.cs" />
     <Compile Include="Messages\Events\TraceEvent.cs" />
     <Compile Include="Messages\Events\WarnEvent.cs" />
+    <Compile Include="Messages\Replies\StateReply.cs" />
+    <Compile Include="Messages\Replies\StateMachineReply.cs" />
+    <Compile Include="Messages\Requests\StateMachineReqest.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="StateMachineState.cs" />
+    <Compile Include="States\State.cs" />
+    <Compile Include="Transitions\Transition.cs" />
+    <Compile Include="Transitions\TransitionAction.cs" />
+    <Compile Include="Transitions\TransitionPrecondition.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
