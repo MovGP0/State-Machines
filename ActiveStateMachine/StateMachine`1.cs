@@ -1,21 +1,20 @@
 ﻿using System.Threading.Channels;
 using ActiveStateMachine.Internals;
 using ActiveStateMachine.Messages;
+using ActiveStateMachine.States;
+using Microsoft.Extensions.Logging;
 using ActiveStateMachine.Messages.Commands;
 using ActiveStateMachine.Messages.Events;
 using ActiveStateMachine.Messages.Replies;
 using ActiveStateMachine.Messages.Requests;
-using ActiveStateMachine.States;
-using Microsoft.Extensions.Logging;
-using StateMachineLog = ActiveStateMachine.Internals.StateMachineLog;
 
 namespace ActiveStateMachine;
 
-public sealed class StateMachine : IObservable<StateMachineMessage>, IDisposable
+public sealed class StateMachine<TTrigger> : IObservable<StateMachineMessage>, IDisposable
 {
     private readonly string _name;
-    private readonly List<State> _possibleStates;
-    private readonly List<State> _stateHistory = [];
+    private readonly List<State<TTrigger>> _possibleStates;
+    private readonly List<State<TTrigger>> _stateHistory = [];
     private readonly List<StateMachineMessage> _messageHistory = [];
     private readonly List<IObserver<StateMachineMessage>> _observers = [];
     private readonly Channel<string> _triggerChannel;
@@ -26,7 +25,7 @@ public sealed class StateMachine : IObservable<StateMachineMessage>, IDisposable
     private Task? _workerTask;
     private volatile StateMachineState _state = StateMachineState.Initialized;
 
-    public StateMachine(string name, IEnumerable<State> possibleStates, int queueCapacity, ILogger logger)
+    public StateMachine(string name, IEnumerable<State<TTrigger>> possibleStates, int queueCapacity, ILogger logger)
     {
         _name = string.IsNullOrWhiteSpace(name) ? throw new ArgumentException("Name must be provided", nameof(name)) : name;
         _possibleStates = (possibleStates ?? throw new ArgumentNullException(nameof(possibleStates))).ToList();
@@ -54,8 +53,8 @@ public sealed class StateMachine : IObservable<StateMachineMessage>, IDisposable
 
     public string Name => _name;
     public StateMachineState CurrentState => _state;
-    public IReadOnlyList<State> StateHistory => _stateHistory;
-    public IReadOnlyList<State> PossibleStates => _possibleStates;
+    public IReadOnlyList<State<TTrigger>> StateHistory => _stateHistory;
+    public IReadOnlyList<State<TTrigger>> PossibleStates => _possibleStates;
     public IReadOnlyList<StateMachineMessage> MessageHistory => _messageHistory;
 
     public void Start()
@@ -141,10 +140,10 @@ public sealed class StateMachine : IObservable<StateMachineMessage>, IDisposable
                 Reply(new StateReply(_name, reqState.Source, _state));
                 break;
             case GetStateHistoryRequest reqHist:
-                Reply(new StateHistoryReply(_name, reqHist.Source, _stateHistory.ToList()));
+                Reply(new StateHistoryReply<TTrigger>(_name, reqHist.Source, _stateHistory.ToList()));
                 break;
             case GetPossibleStatesRequest reqPoss:
-                Reply(new PossibleStatesReply(_name, reqPoss.Source, _possibleStates.ToList()));
+                Reply(new PossibleStatesReply<TTrigger>(_name, reqPoss.Source, _possibleStates.ToList()));
                 break;
             case GetMessageHistoryRequest reqMsg:
                 var take = reqMsg.MaximumCount is null ? _messageHistory.Count : Math.Max(0, Math.Min(_messageHistory.Count, reqMsg.MaximumCount.Value));
@@ -218,9 +217,9 @@ public sealed class StateMachine : IObservable<StateMachineMessage>, IDisposable
         }
     }
 
-    private State GetCurrentState() => _stateHistory[^1];
+    private State<TTrigger> GetCurrentState() => _stateHistory[^1];
 
-    private void SetCurrentState(State newState)
+    private void SetCurrentState(State<TTrigger> newState)
     {
         _stateHistory.Add(newState);
     }

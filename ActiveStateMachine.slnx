@@ -1,0 +1,10 @@
+﻿<Solution>
+  <Folder Name="/Documents/">
+    <File Path="LICENSE" />
+    <File Path="README.md" />
+  </Folder>
+  <Project Path="ActiveStateMachine.Analyzers\ActiveStateMachine.Analyzers.csproj" Type="Classic C#" />
+  <Project Path="ActiveStateMachine.CodeFixes\ActiveStateMachine.CodeFixes.csproj" Type="Classic C#" />
+  <Project Path="ActiveStateMachine.Tests\ActiveStateMachine.Tests.csproj" Type="Classic C#" />
+  <Project Path="ActiveStateMachine\ActiveStateMachine.csproj" Type="Classic C#" />
+</Solution>
